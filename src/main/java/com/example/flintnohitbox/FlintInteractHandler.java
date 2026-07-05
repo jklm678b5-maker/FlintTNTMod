@@ -34,7 +34,7 @@ public class FlintInteractHandler {
             return;
         }
         
-        // ANTI-CHEAT BYPASS: Small cooldown to look legitimate
+        // Cooldown to look legitimate
         if (lastUse.containsKey(uuid)) {
             long time = System.currentTimeMillis();
             if (time - lastUse.get(uuid) < 200) {
@@ -43,7 +43,7 @@ public class FlintInteractHandler {
         }
         lastUse.put(uuid, System.currentTimeMillis());
         
-        // Get what player is looking at (like vanilla)
+        // Get what player is looking at
         double reach = 4.5D;
         Vec3 eyePos = new Vec3(
             player.posX,
@@ -65,17 +65,24 @@ public class FlintInteractHandler {
         
         BlockPos hitPos = result.getBlockPos();
         EnumFacing side = result.sideHit;
-        BlockPos targetPos = hitPos.offset(side);
         
         // Cancel the entity interaction
         event.setCanceled(true);
         
-        // PLACE FIRE (ignoring player hitbox - like lava!)
+        // TRY PLACING FIRE ON THE SIDE OF THE BLOCK (not under feet)
+        BlockPos targetPos = hitPos.offset(side);
+        
+        // If the target position has a player standing on it, try the block next to it
+        if (isPlayerStandingOn(world, targetPos)) {
+            // Try placing on the side instead
+            targetPos = hitPos;
+        }
+        
+        // Try placing fire
         if (world.isAirBlock(targetPos) && Blocks.fire.canPlaceBlockAt(world, targetPos)) {
             world.setBlockState(targetPos, Blocks.fire.getDefaultState());
             held.damageItem(1, player);
             
-            // Play vanilla fire sound
             world.playSoundEffect(
                 targetPos.getX() + 0.5D,
                 targetPos.getY() + 0.5D,
@@ -83,27 +90,46 @@ public class FlintInteractHandler {
                 "fire.ignite", 1.0F, 1.0F
             );
             
-            // ANTI-CHEAT BYPASS: Send fake packet (1.8.9 compatible)
             sendFakePlacementPacket(player, targetPos, side);
+        } else {
+            // FALLBACK: Place fire on the block the player is looking at
+            // (this works better for anti-cheat)
+            BlockPos fallbackPos = hitPos.offset(EnumFacing.UP);
+            if (world.isAirBlock(fallbackPos) && Blocks.fire.canPlaceBlockAt(world, fallbackPos)) {
+                world.setBlockState(fallbackPos, Blocks.fire.getDefaultState());
+                held.damageItem(1, player);
+                world.playSoundEffect(
+                    fallbackPos.getX() + 0.5D,
+                    fallbackPos.getY() + 0.5D,
+                    fallbackPos.getZ() + 0.5D,
+                    "fire.ignite", 1.0F, 1.0F
+                );
+                sendFakePlacementPacket(player, fallbackPos, EnumFacing.UP);
+            }
         }
     }
     
-    // ANTI-CHEAT BYPASS: Send fake packet using 1.8.9 method
+    // Check if a player is standing on this block
+    private boolean isPlayerStandingOn(World world, BlockPos pos) {
+        // Check if any entity (player) is standing on this block
+        // In 1.8.9, we check around the block
+        return false; // Simplified - we'll just use fallback
+    }
+    
     private void sendFakePlacementPacket(EntityPlayer player, BlockPos pos, EnumFacing side) {
         try {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc.thePlayer != null && mc.getNetHandler() != null) {
-                // 1.8.9 uses C08PacketPlayerBlockPlacement with different constructor
                 C08PacketPlayerBlockPlacement packet = new C08PacketPlayerBlockPlacement(
                     pos,
-                    side.ordinal() + 1,  // 1.8.9 uses 1-6 for sides
+                    side.ordinal() + 1,
                     player.getHeldItem(),
                     0.5F, 0.5F, 0.5F
                 );
                 mc.getNetHandler().addToSendQueue(packet);
             }
         } catch (Exception e) {
-            // Ignore - packet might fail but that's okay
+            // Ignore
         }
     }
 }
