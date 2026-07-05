@@ -8,7 +8,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
-import net.minecraft.util.MovingObjectPosition;
+import net.minecraft.util.MathHelper;
 import net.minecraft.util.Vec3;
 import net.minecraft.world.World;
 import net.minecraftforge.event.entity.player.EntityInteractEvent;
@@ -47,98 +47,128 @@ public class FlintInteractHandler {
         // CANCEL the entity interaction
         event.setCanceled(true);
         
-        // The KEY is using the right parameters!
-        // This is what hack clients use to ignore entities
+        // ===================================================
+        // THE KEY: Calculate the block position using ONLY
+        // the player's look direction - IGNORES ALL ENTITIES!
+        // ===================================================
+        
+        // Get player's eye position
         Vec3 eyePos = new Vec3(
             player.posX,
             player.posY + player.getEyeHeight(),
             player.posZ
         );
-        Vec3 lookVec = player.getLook(1.0F);
-        Vec3 endPos = eyePos.addVector(
-            lookVec.xCoord * 4.5D,
-            lookVec.yCoord * 4.5D,
-            lookVec.zCoord * 4.5D
-        );
         
-        // USE THE RIGHT PARAMETERS - This ignores entities!
-        // The third parameter 'false' means don't stop on liquids
-        // The fourth parameter 'false' means don't ignore non-solid blocks
-        // The fifth parameter 'true' is the key - it returns the last block even if it's not solid
-        MovingObjectPosition result = world.rayTraceBlocks(eyePos, endPos, false, false, true);
+        // Get player's look direction (yaw and pitch)
+        float pitch = player.rotationPitch;
+        float yaw = player.rotationYaw;
         
-        // If we hit a block, place fire there
-        if (result != null && result.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
-            BlockPos hitPos = result.getBlockPos();
-            EnumFacing side = result.sideHit;
-            BlockPos targetPos = hitPos.offset(side);
+        // Convert to vector (this is what Minecraft does internally)
+        float pitchRad = -pitch * 0.017453292F;
+        float yawRad = -yaw * 0.017453292F;
+        
+        double lookX = MathHelper.sin(yawRad) * MathHelper.cos(pitchRad);
+        double lookY = MathHelper.sin(pitchRad);
+        double lookZ = -MathHelper.cos(yawRad) * MathHelper.cos(pitchRad);
+        
+        Vec3 lookVec = new Vec3(lookX, lookY, lookZ);
+        
+        // NOW: Step through the ray, ignoring ALL entities!
+        // This is exactly what Minecraft does, but we SKIP the entity check!
+        double reach = 4.5D;
+        BlockPos targetBlock = null;
+        EnumFacing targetSide = null;
+        
+        // Step through each block position
+        for (double d = 0.0; d < reach; d += 0.1) {
+            double currentX = eyePos.xCoord + lookVec.xCoord * d;
+            double currentY = eyePos.yCoord + lookVec.yCoord * d;
+            double currentZ = eyePos.zCoord + lookVec.zCoord * d;
+            
+            BlockPos checkPos = new BlockPos(
+                MathHelper.floor_double(currentX),
+                MathHelper.floor_double(currentY),
+                MathHelper.floor_double(currentZ)
+            );
+            
+            // Check if this position is a block (NOT an entity!)
+            if (!world.isAirBlock(checkPos)) {
+                // Found a block! Now determine which face we hit
+                targetBlock = checkPos;
+                
+                // Calculate which face was hit (approximate)
+                double hitX = currentX - checkPos.getX();
+                double hitY = currentY - checkPos.getY();
+                double hitZ = currentZ - checkPos.getZ();
+                
+                // Determine the face based on the largest offset
+                if (hitX < 0.1) targetSide = EnumFacing.WEST;
+                else if (hitX > 0.9) targetSide = EnumFacing.EAST;
+                else if (hitY < 0.1) targetSide = EnumFacing.DOWN;
+                else if (hitY > 0.9) targetSide = EnumFacing.UP;
+                else if (hitZ < 0.1) targetSide = EnumFacing.NORTH;
+                else if (hitZ > 0.9) targetSide = EnumFacing.SOUTH;
+                else targetSide = EnumFacing.UP;
+                
+                break;
+            }
+        }
+        
+        // If we found a block, place fire on it
+        if (targetBlock != null) {
+            BlockPos firePos = targetBlock.offset(targetSide);
             
             // Place fire
-            if (world.isAirBlock(targetPos) && Blocks.fire.canPlaceBlockAt(world, targetPos)) {
-                world.setBlockState(targetPos, Blocks.fire.getDefaultState());
+            if (world.isAirBlock(firePos) && Blocks.fire.canPlaceBlockAt(world, firePos)) {
+                world.setBlockState(firePos, Blocks.fire.getDefaultState());
                 held.damageItem(1, player);
                 
                 world.playSoundEffect(
-                    targetPos.getX() + 0.5D,
-                    targetPos.getY() + 0.5D,
-                    targetPos.getZ() + 0.5D,
+                    firePos.getX() + 0.5D,
+                    firePos.getY() + 0.5D,
+                    firePos.getZ() + 0.5D,
                     "fire.ignite", 1.0F, 1.0F
                 );
                 
-                sendFakePlacementPacket(player, targetPos, side);
-                return;
+                sendFakePlacementPacket(player, firePos, targetSide);
+            } else if (Blocks.fire.canPlaceBlockAt(world, targetBlock)) {
+                // If can't place on the side, place on the block itself
+                world.setBlockState(targetBlock, Blocks.fire.getDefaultState());
+                held.damageItem(1, player);
+                world.playSoundEffect(
+                    targetBlock.getX() + 0.5D,
+                    targetBlock.getY() + 0.5D,
+                    targetBlock.getZ() + 0.5D,
+                    "fire.ignite", 1.0F, 1.0F
+                );
+                sendFakePlacementPacket(player, targetBlock, EnumFacing.UP);
             }
-        }
-        
-        // FALLBACK: If ray trace fails, place fire on the block the player is looking at
-        // This handles the case where you're looking at a block through an entity
-        BlockPos lookPos = getBlockLookingAt(player);
-        if (lookPos != null && world.isAirBlock(lookPos) && Blocks.fire.canPlaceBlockAt(world, lookPos)) {
-            world.setBlockState(lookPos, Blocks.fire.getDefaultState());
-            held.damageItem(1, player);
-            world.playSoundEffect(
-                lookPos.getX() + 0.5D,
-                lookPos.getY() + 0.5D,
-                lookPos.getZ() + 0.5D,
-                "fire.ignite", 1.0F, 1.0F
+        } else {
+            // FALLBACK: If no block found, place fire at the max distance
+            double endX = eyePos.xCoord + lookVec.xCoord * reach;
+            double endY = eyePos.yCoord + lookVec.yCoord * reach;
+            double endZ = eyePos.zCoord + lookVec.zCoord * reach;
+            
+            BlockPos endPos = new BlockPos(
+                MathHelper.floor_double(endX),
+                MathHelper.floor_double(endY),
+                MathHelper.floor_double(endZ)
             );
-            sendFakePlacementPacket(player, lookPos, EnumFacing.UP);
+            
+            if (world.isAirBlock(endPos) && Blocks.fire.canPlaceBlockAt(world, endPos)) {
+                world.setBlockState(endPos, Blocks.fire.getDefaultState());
+                held.damageItem(1, player);
+                world.playSoundEffect(
+                    endPos.getX() + 0.5D,
+                    endPos.getY() + 0.5D,
+                    endPos.getZ() + 0.5D,
+                    "fire.ignite", 1.0F, 1.0F
+                );
+                sendFakePlacementPacket(player, endPos, EnumFacing.UP);
+            }
         }
     }
     
-    // Helper method to get the block position without using rayTrace (pure math)
-    private BlockPos getBlockLookingAt(EntityPlayer player) {
-        // This uses pure math to calculate the block position
-        // No rayTrace, so no entity interference!
-        Vec3 eyePos = new Vec3(
-            player.posX,
-            player.posY + player.getEyeHeight(),
-            player.posZ
-        );
-        Vec3 lookVec = player.getLook(1.0F);
-        
-        // Step through the ray manually (ignoring entities completely)
-        for (double d = 0.1; d < 4.5; d += 0.05) {
-            double x = eyePos.xCoord + lookVec.xCoord * d;
-            double y = eyePos.yCoord + lookVec.yCoord * d;
-            double z = eyePos.zCoord + lookVec.zCoord * d;
-            
-            BlockPos checkPos = new BlockPos(
-                (int)Math.floor(x),
-                (int)Math.floor(y),
-                (int)Math.floor(z)
-            );
-            
-            // If we find a block, return it
-            if (!player.worldObj.isAirBlock(checkPos)) {
-                return checkPos;
-            }
-        }
-        
-        return null;
-    }
-    
-    // ANTI-CHEAT BYPASS: Send fake packet
     private void sendFakePlacementPacket(EntityPlayer player, BlockPos pos, EnumFacing side) {
         try {
             Minecraft mc = Minecraft.getMinecraft();
