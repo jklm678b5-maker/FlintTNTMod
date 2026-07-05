@@ -17,16 +17,15 @@ jobs:
         java-version: '8'
         distribution: 'temurin'
     
-    - name: Download Forge and Minecraft
+    - name: Download Forge
       run: |
         mkdir -p libs
         wget -O libs/forge.jar https://maven.minecraftforge.net/net/minecraftforge/forge/1.8.9-11.15.1.2318-1.8.9/forge-1.8.9-11.15.1.2318-1.8.9-universal.jar
-        wget -O libs/minecraft.jar https://maven.minecraftforge.net/net/minecraft/server/1.8.9/minecraft-1.8.9-server.jar
     
-    - name: Compile Mod with all dependencies
+    - name: Compile Mod
       run: |
         mkdir -p build/classes
-        javac -cp "libs/*" -d build/classes src/main/java/com/example/flintnohitbox/*.java
+        javac -cp "libs/forge.jar" -d build/classes src/main/java/com/example/flintnohitbox/*.java
     
     - name: Create JAR
       run: |
