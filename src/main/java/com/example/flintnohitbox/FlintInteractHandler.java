@@ -48,8 +48,7 @@ public class FlintInteractHandler {
         event.setCanceled(true);
         
         // ===================================================
-        // THE KEY: Calculate the block position using ONLY
-        // the player's look direction - IGNORES ALL ENTITIES!
+        // Use Minecraft's getLook() method (this is correct!)
         // ===================================================
         
         // Get player's eye position
@@ -59,22 +58,15 @@ public class FlintInteractHandler {
             player.posZ
         );
         
-        // Get player's look direction (yaw and pitch)
-        float pitch = player.rotationPitch;
-        float yaw = player.rotationYaw;
+        // Use Minecraft's built-in look vector (this works!)
+        Vec3 lookVec = player.getLook(1.0F);
         
-        // Convert to vector (this is what Minecraft does internally)
-        float pitchRad = -pitch * 0.017453292F;
-        float yawRad = -yaw * 0.017453292F;
-        
-        double lookX = MathHelper.sin(yawRad) * MathHelper.cos(pitchRad);
-        double lookY = MathHelper.sin(pitchRad);
-        double lookZ = -MathHelper.cos(yawRad) * MathHelper.cos(pitchRad);
-        
-        Vec3 lookVec = new Vec3(lookX, lookY, lookZ);
+        // If lookVec is null, use default
+        if (lookVec == null) {
+            lookVec = new Vec3(0, 0, -1);
+        }
         
         // NOW: Step through the ray, ignoring ALL entities!
-        // This is exactly what Minecraft does, but we SKIP the entity check!
         double reach = 4.5D;
         BlockPos targetBlock = null;
         EnumFacing targetSide = null;
@@ -155,6 +147,7 @@ public class FlintInteractHandler {
                 MathHelper.floor_double(endZ)
             );
             
+            // Try the end position and the block in front of it
             if (world.isAirBlock(endPos) && Blocks.fire.canPlaceBlockAt(world, endPos)) {
                 world.setBlockState(endPos, Blocks.fire.getDefaultState());
                 held.damageItem(1, player);
@@ -165,6 +158,14 @@ public class FlintInteractHandler {
                     "fire.ignite", 1.0F, 1.0F
                 );
                 sendFakePlacementPacket(player, endPos, EnumFacing.UP);
+            } else {
+                // Try the block in front of the player
+                BlockPos frontPos = player.getPosition().offset(player.getHorizontalFacing(), 2);
+                if (world.isAirBlock(frontPos) && Blocks.fire.canPlaceBlockAt(world, frontPos)) {
+                    world.setBlockState(frontPos, Blocks.fire.getDefaultState());
+                    held.damageItem(1, player);
+                    sendFakePlacementPacket(player, frontPos, EnumFacing.UP);
+                }
             }
         }
     }
