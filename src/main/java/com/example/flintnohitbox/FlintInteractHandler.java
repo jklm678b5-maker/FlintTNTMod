@@ -1,11 +1,10 @@
 package com.example.flintnohitbox;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemFlintAndSteel;
 import net.minecraft.item.ItemStack;
-import net.minecraft.network.play.client.C07PacketPlayerDigging;
-import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MovingObjectPosition;
@@ -43,7 +42,7 @@ public class FlintInteractHandler {
         }
         lastUse.put(uuid, System.currentTimeMillis());
         
-        // ANTI-CHEAT BYPASS: Get what player is looking at (like vanilla)
+        // Get what player is looking at (like vanilla)
         double reach = 4.5D;
         Vec3 eyePos = new Vec3(
             player.posX,
@@ -67,37 +66,42 @@ public class FlintInteractHandler {
         EnumFacing side = result.sideHit;
         BlockPos targetPos = hitPos.offset(side);
         
-        // ANTI-CHEAT BYPASS: Cancel the entity interaction
+        // Cancel the entity interaction
         event.setCanceled(true);
-        
-        // ANTI-CHEAT BYPASS: Send fake placement packet (makes anti-cheat think it's normal)
-        sendFakePlacementPacket(player, targetPos, side);
         
         // PLACE FIRE (ignoring player hitbox - like lava!)
         if (world.isAirBlock(targetPos) && Blocks.fire.canPlaceBlockAt(world, targetPos)) {
             world.setBlockState(targetPos, Blocks.fire.getDefaultState());
             held.damageItem(1, player);
             
-            // ANTI-CHEAT BYPASS: Play vanilla fire sound
+            // Play vanilla fire sound
             world.playSoundEffect(
                 targetPos.getX() + 0.5D,
                 targetPos.getY() + 0.5D,
                 targetPos.getZ() + 0.5D,
                 "fire.ignite", 1.0F, 1.0F
             );
+            
+            // ANTI-CHEAT BYPASS: Send a fake block placement packet (client-side)
+            sendFakePlacementPacket(player, targetPos, side);
         }
     }
     
     // ANTI-CHEAT BYPASS: Send fake packet to make it look like vanilla block placement
     private void sendFakePlacementPacket(EntityPlayer player, BlockPos pos, EnumFacing side) {
         try {
-            C08PacketPlayerBlockPlacement packet = new C08PacketPlayerBlockPlacement(
-                pos,
-                side.ordinal(),
-                player.getHeldItem(),
-                0.5F, 0.5F, 0.5F
-            );
-            player.playerNetServerHandler.sendPacket(packet);
+            // Get the Minecraft instance and the NetHandler
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.getNetHandler() != null) {
+                net.minecraft.network.play.client.C08PacketPlayerBlockPlacement packet = 
+                    new net.minecraft.network.play.client.C08PacketPlayerBlockPlacement(
+                        pos,
+                        side.ordinal(),
+                        player.getHeldItem(),
+                        0.5F, 0.5F, 0.5F
+                    );
+                mc.getNetHandler().sendPacket(packet);
+            }
         } catch (Exception e) {
             // Ignore - packet might fail but that's okay
         }
