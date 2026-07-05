@@ -13,6 +13,7 @@ import net.minecraft.util.Vec3;
 import net.minecraft.world.World;
 import net.minecraftforge.event.entity.player.EntityInteractEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -43,7 +44,10 @@ public class FlintInteractHandler {
         }
         lastUse.put(uuid, System.currentTimeMillis());
         
-        // Get what player is looking at
+        // CANCEL the entity interaction (prevents lighting player on fire)
+        event.setCanceled(true);
+        
+        // Get the block the player is looking at - EXACTLY LIKE LAVA PLACEMENT!
         double reach = 4.5D;
         Vec3 eyePos = new Vec3(
             player.posX,
@@ -65,24 +69,15 @@ public class FlintInteractHandler {
         
         BlockPos hitPos = result.getBlockPos();
         EnumFacing side = result.sideHit;
-        
-        // Cancel the entity interaction
-        event.setCanceled(true);
-        
-        // TRY PLACING FIRE ON THE SIDE OF THE BLOCK (not under feet)
         BlockPos targetPos = hitPos.offset(side);
         
-        // If the target position has a player standing on it, try the block next to it
-        if (isPlayerStandingOn(world, targetPos)) {
-            // Try placing on the side instead
-            targetPos = hitPos;
-        }
-        
-        // Try placing fire
+        // PLACE FIRE EXACTLY LIKE LAVA - DIRECT BLOCK PLACEMENT!
         if (world.isAirBlock(targetPos) && Blocks.fire.canPlaceBlockAt(world, targetPos)) {
+            // DIRECT BLOCK SET - LIKE LAVA!
             world.setBlockState(targetPos, Blocks.fire.getDefaultState());
             held.damageItem(1, player);
             
+            // Play fire sound (like lava pop sound but fire)
             world.playSoundEffect(
                 targetPos.getX() + 0.5D,
                 targetPos.getY() + 0.5D,
@@ -90,32 +85,12 @@ public class FlintInteractHandler {
                 "fire.ignite", 1.0F, 1.0F
             );
             
+            // Send fake packet for anti-cheat
             sendFakePlacementPacket(player, targetPos, side);
-        } else {
-            // FALLBACK: Place fire on the block the player is looking at
-            // (this works better for anti-cheat)
-            BlockPos fallbackPos = hitPos.offset(EnumFacing.UP);
-            if (world.isAirBlock(fallbackPos) && Blocks.fire.canPlaceBlockAt(world, fallbackPos)) {
-                world.setBlockState(fallbackPos, Blocks.fire.getDefaultState());
-                held.damageItem(1, player);
-                world.playSoundEffect(
-                    fallbackPos.getX() + 0.5D,
-                    fallbackPos.getY() + 0.5D,
-                    fallbackPos.getZ() + 0.5D,
-                    "fire.ignite", 1.0F, 1.0F
-                );
-                sendFakePlacementPacket(player, fallbackPos, EnumFacing.UP);
-            }
         }
     }
     
-    // Check if a player is standing on this block
-    private boolean isPlayerStandingOn(World world, BlockPos pos) {
-        // Check if any entity (player) is standing on this block
-        // In 1.8.9, we check around the block
-        return false; // Simplified - we'll just use fallback
-    }
-    
+    // Send fake packet like vanilla (bypasses anti-cheat)
     private void sendFakePlacementPacket(EntityPlayer player, BlockPos pos, EnumFacing side) {
         try {
             Minecraft mc = Minecraft.getMinecraft();
@@ -131,5 +106,10 @@ public class FlintInteractHandler {
         } catch (Exception e) {
             // Ignore
         }
+    }
+    
+    @SubscribeEvent
+    public void onDisconnect(FMLNetworkEvent.ClientDisconnectionFromServerEvent event) {
+        lastUse.clear();
     }
 }
