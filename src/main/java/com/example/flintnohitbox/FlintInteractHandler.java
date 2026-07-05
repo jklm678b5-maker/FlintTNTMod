@@ -44,10 +44,11 @@ public class FlintInteractHandler {
         }
         lastUse.put(uuid, System.currentTimeMillis());
         
-        // CANCEL the entity interaction (prevents lighting player on fire)
+        // CANCEL the entity interaction (prevents lighting entity on fire)
         event.setCanceled(true);
         
-        // Get the block the player is looking at - EXACTLY LIKE LAVA PLACEMENT!
+        // Use rayTrace with entity ignoring enabled!
+        // This is the key - we want to IGNORE entities when tracing
         double reach = 4.5D;
         Vec3 eyePos = new Vec3(
             player.posX,
@@ -61,6 +62,8 @@ public class FlintInteractHandler {
             lookVec.zCoord * reach
         );
         
+        // IMPORTANT: rayTraceBlocks ignores entities automatically!
+        // So this will hit the block BEHIND the zombie
         MovingObjectPosition result = world.rayTraceBlocks(eyePos, endPos, false, true, false);
         
         if (result == null || result.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK) {
@@ -71,13 +74,13 @@ public class FlintInteractHandler {
         EnumFacing side = result.sideHit;
         BlockPos targetPos = hitPos.offset(side);
         
-        // PLACE FIRE EXACTLY LIKE LAVA - DIRECT BLOCK PLACEMENT!
+        // Place fire on the block behind the zombie (where you're actually aiming)
         if (world.isAirBlock(targetPos) && Blocks.fire.canPlaceBlockAt(world, targetPos)) {
-            // DIRECT BLOCK SET - LIKE LAVA!
+            // Place fire
             world.setBlockState(targetPos, Blocks.fire.getDefaultState());
             held.damageItem(1, player);
             
-            // Play fire sound (like lava pop sound but fire)
+            // Play fire sound
             world.playSoundEffect(
                 targetPos.getX() + 0.5D,
                 targetPos.getY() + 0.5D,
@@ -85,12 +88,28 @@ public class FlintInteractHandler {
                 "fire.ignite", 1.0F, 1.0F
             );
             
-            // Send fake packet for anti-cheat
+            // ANTI-CHEAT BYPASS: Send multiple packets to make it stick
             sendFakePlacementPacket(player, targetPos, side);
+            
+            // Bypass: Send a second packet after a tiny delay
+            new Thread(() -> {
+                try {
+                    Thread.sleep(50);
+                    sendFakePlacementPacket(player, targetPos, side);
+                } catch (Exception e) {}
+            }).start();
+            
+        } else {
+            // If can't place fire, try placing on the block itself
+            if (Blocks.fire.canPlaceBlockAt(world, hitPos)) {
+                world.setBlockState(hitPos, Blocks.fire.getDefaultState());
+                held.damageItem(1, player);
+                sendFakePlacementPacket(player, hitPos, side);
+            }
         }
     }
     
-    // Send fake packet like vanilla (bypasses anti-cheat)
+    // ANTI-CHEAT BYPASS: Send fake packet
     private void sendFakePlacementPacket(EntityPlayer player, BlockPos pos, EnumFacing side) {
         try {
             Minecraft mc = Minecraft.getMinecraft();
