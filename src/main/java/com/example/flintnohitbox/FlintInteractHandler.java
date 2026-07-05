@@ -5,6 +5,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemFlintAndSteel;
 import net.minecraft.item.ItemStack;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MovingObjectPosition;
@@ -36,7 +37,7 @@ public class FlintInteractHandler {
         // ANTI-CHEAT BYPASS: Small cooldown to look legitimate
         if (lastUse.containsKey(uuid)) {
             long time = System.currentTimeMillis();
-            if (time - lastUse.get(uuid) < 200) { // 0.2 second cooldown
+            if (time - lastUse.get(uuid) < 200) {
                 return;
             }
         }
@@ -82,25 +83,24 @@ public class FlintInteractHandler {
                 "fire.ignite", 1.0F, 1.0F
             );
             
-            // ANTI-CHEAT BYPASS: Send a fake block placement packet (client-side)
+            // ANTI-CHEAT BYPASS: Send fake packet (1.8.9 compatible)
             sendFakePlacementPacket(player, targetPos, side);
         }
     }
     
-    // ANTI-CHEAT BYPASS: Send fake packet to make it look like vanilla block placement
+    // ANTI-CHEAT BYPASS: Send fake packet using 1.8.9 method
     private void sendFakePlacementPacket(EntityPlayer player, BlockPos pos, EnumFacing side) {
         try {
-            // Get the Minecraft instance and the NetHandler
             Minecraft mc = Minecraft.getMinecraft();
-            if (mc.getNetHandler() != null) {
-                net.minecraft.network.play.client.C08PacketPlayerBlockPlacement packet = 
-                    new net.minecraft.network.play.client.C08PacketPlayerBlockPlacement(
-                        pos,
-                        side.ordinal(),
-                        player.getHeldItem(),
-                        0.5F, 0.5F, 0.5F
-                    );
-                mc.getNetHandler().sendPacket(packet);
+            if (mc.thePlayer != null && mc.getNetHandler() != null) {
+                // 1.8.9 uses C08PacketPlayerBlockPlacement with different constructor
+                C08PacketPlayerBlockPlacement packet = new C08PacketPlayerBlockPlacement(
+                    pos,
+                    side.ordinal() + 1,  // 1.8.9 uses 1-6 for sides
+                    player.getHeldItem(),
+                    0.5F, 0.5F, 0.5F
+                );
+                mc.getNetHandler().addToSendQueue(packet);
             }
         } catch (Exception e) {
             // Ignore - packet might fail but that's okay
