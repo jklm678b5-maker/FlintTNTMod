@@ -8,7 +8,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
-import net.minecraft.util.MovingObjectPosition;
+import net.minecraft.util.MathHelper;
 import net.minecraft.util.Vec3;
 import net.minecraft.world.World;
 import net.minecraftforge.event.entity.player.EntityInteractEvent;
@@ -35,7 +35,7 @@ public class FlintInteractHandler {
             return;
         }
         
-        // Cooldown to look legitimate
+        // Cooldown
         if (lastUse.containsKey(uuid)) {
             long time = System.currentTimeMillis();
             if (time - lastUse.get(uuid) < 200) {
@@ -44,37 +44,17 @@ public class FlintInteractHandler {
         }
         lastUse.put(uuid, System.currentTimeMillis());
         
-        // CANCEL the entity interaction (prevents lighting entity on fire)
+        // CANCEL the entity interaction
         event.setCanceled(true);
         
-        // Use rayTrace with entity ignoring enabled!
-        // This is the key - we want to IGNORE entities when tracing
-        double reach = 4.5D;
-        Vec3 eyePos = new Vec3(
-            player.posX,
-            player.posY + player.getEyeHeight(),
-            player.posZ
-        );
-        Vec3 lookVec = player.getLook(1.0F);
-        Vec3 endPos = eyePos.addVector(
-            lookVec.xCoord * reach,
-            lookVec.yCoord * reach,
-            lookVec.zCoord * reach
-        );
+        // Calculate the EXACT block the player is looking at - IGNORES ALL ENTITIES!
+        BlockPos targetPos = getTargetBlock(player, 4.5D);
         
-        // IMPORTANT: rayTraceBlocks ignores entities automatically!
-        // So this will hit the block BEHIND the zombie
-        MovingObjectPosition result = world.rayTraceBlocks(eyePos, endPos, false, true, false);
-        
-        if (result == null || result.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK) {
+        if (targetPos == null) {
             return;
         }
         
-        BlockPos hitPos = result.getBlockPos();
-        EnumFacing side = result.sideHit;
-        BlockPos targetPos = hitPos.offset(side);
-        
-        // Place fire on the block behind the zombie (where you're actually aiming)
+        // Place fire on the block (ignoring entities completely)
         if (world.isAirBlock(targetPos) && Blocks.fire.canPlaceBlockAt(world, targetPos)) {
             // Place fire
             world.setBlockState(targetPos, Blocks.fire.getDefaultState());
@@ -88,25 +68,84 @@ public class FlintInteractHandler {
                 "fire.ignite", 1.0F, 1.0F
             );
             
-            // ANTI-CHEAT BYPASS: Send multiple packets to make it stick
-            sendFakePlacementPacket(player, targetPos, side);
+            // Send fake packet for anti-cheat
+            sendFakePlacementPacket(player, targetPos, EnumFacing.UP);
+        }
+    }
+    
+    // This method calculates the block position the player is looking at
+    // WITHOUT using rayTrace that gets blocked by entities!
+    private BlockPos getTargetBlock(EntityPlayer player, double range) {
+        // Get player's eye position
+        Vec3 eyePos = new Vec3(
+            player.posX,
+            player.posY + player.getEyeHeight(),
+            player.posZ
+        );
+        
+        // Get player's look direction
+        float pitch = player.rotationPitch;
+        float yaw = player.rotationYaw;
+        
+        // Calculate look vector from yaw and pitch
+        float pitchRad = -pitch * 0.017453292F;
+        float yawRad = -yaw * 0.017453292F;
+        
+        double x = MathHelper.sin(yawRad) * MathHelper.cos(pitchRad);
+        double y = MathHelper.sin(pitchRad);
+        double z = -MathHelper.cos(yawRad) * MathHelper.cos(pitchRad);
+        
+        Vec3 lookVec = new Vec3(x, y, z);
+        
+        // Step through the ray to find the block - IGNORES ENTITIES!
+        for (double d = 0; d < range; d += 0.1D) {
+            double currentX = eyePos.xCoord + lookVec.xCoord * d;
+            double currentY = eyePos.yCoord + lookVec.yCoord * d;
+            double currentZ = eyePos.zCoord + lookVec.zCoord * d;
             
-            // Bypass: Send a second packet after a tiny delay
-            new Thread(() -> {
-                try {
-                    Thread.sleep(50);
-                    sendFakePlacementPacket(player, targetPos, side);
-                } catch (Exception e) {}
-            }).start();
+            BlockPos checkPos = new BlockPos(
+                MathHelper.floor_double(currentX),
+                MathHelper.floor_double(currentY),
+                MathHelper.floor_double(currentZ)
+            );
             
-        } else {
-            // If can't place fire, try placing on the block itself
-            if (Blocks.fire.canPlaceBlockAt(world, hitPos)) {
-                world.setBlockState(hitPos, Blocks.fire.getDefaultState());
-                held.damageItem(1, player);
-                sendFakePlacementPacket(player, hitPos, side);
+            // Check if this position is a block
+            if (!player.worldObj.isAirBlock(checkPos)) {
+                // Found a block - return it
+                return checkPos;
             }
         }
+        
+        // If we didn't find a block, check the block at the max range
+        double endX = eyePos.xCoord + lookVec.xCoord * range;
+        double endY = eyePos.yCoord + lookVec.yCoord * range;
+        double endZ = eyePos.zCoord + lookVec.zCoord * range;
+        
+        BlockPos endPos = new BlockPos(
+            MathHelper.floor_double(endX),
+            MathHelper.floor_double(endY),
+            MathHelper.floor_double(endZ)
+        );
+        
+        // Check if the end position is a block
+        if (!player.worldObj.isAirBlock(endPos)) {
+            return endPos;
+        }
+        
+        // If we still don't have a block, use the block above the end position
+        // This covers the case where you're aiming at a block's face
+        BlockPos abovePos = endPos.offset(EnumFacing.UP);
+        if (!player.worldObj.isAirBlock(abovePos)) {
+            return abovePos;
+        }
+        
+        // Check the block below the end position
+        BlockPos belowPos = endPos.offset(EnumFacing.DOWN);
+        if (!player.worldObj.isAirBlock(belowPos)) {
+            return belowPos;
+        }
+        
+        return endPos;
     }
     
     // ANTI-CHEAT BYPASS: Send fake packet
